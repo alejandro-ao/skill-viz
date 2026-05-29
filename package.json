@@ -5,8 +5,8 @@
   "license": "MIT",
   "type": "module",
   "bin": {
-    "skill-viz": "./index.js",
-    "skill-visualizer": "./index.js"
+    "skill-viz": "index.js",
+    "skill-visualizer": "index.js"
   },
   "files": [
     "index.js",
