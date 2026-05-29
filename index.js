@@ -66,7 +66,7 @@ function markdownToHtml(md) {
   md = String(md || '').replace(/\r\n/g, '\n');
   const codeBlocks = [];
   md = md.replace(/```([^\n`]*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    codeBlocks.push(`<pre><code class="language-${escapeHtml(lang || '')}">${escapeHtml(code)}</code></pre>`);
+    codeBlocks.push(`<pre><code class="language-${escapeHtml((lang || '').trim())}">${highlightCode(code, lang)}</code></pre>`);
     return `\u0000CODE${codeBlocks.length - 1}\u0000`;
   });
   const out = [];
@@ -80,10 +80,21 @@ function markdownToHtml(md) {
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
   const flushParagraph = () => { if (paragraph.length) { out.push(`<p>${inline(paragraph.join(' '))}</p>`); paragraph = []; } };
   const closeLists = () => { if (inUl) { out.push('</ul>'); inUl = false; } if (inOl) { out.push('</ol>'); inOl = false; } };
-  for (const line of md.split('\n')) {
+  const lines = md.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const stripped = line.trim();
     if (!stripped) { flushParagraph(); closeLists(); continue; }
     if (stripped.startsWith('\u0000CODE')) { flushParagraph(); closeLists(); out.push(stripped); continue; }
+    if (isTableStart(lines, i)) {
+      flushParagraph(); closeLists();
+      const table = [lines[i], lines[i + 1]];
+      i += 2;
+      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) { table.push(lines[i]); i++; }
+      i--;
+      out.push(tableToHtml(table, inline));
+      continue;
+    }
     const h = stripped.match(/^(#{1,6})\s+(.+)$/);
     if (h) { flushParagraph(); closeLists(); const level = h[1].length; out.push(`<h${level} id="${slugify(h[2])}">${inline(h[2])}</h${level}>`); continue; }
     const ul = stripped.match(/^[-*]\s+(.+)$/);
@@ -97,6 +108,33 @@ function markdownToHtml(md) {
   let rendered = out.join('\n');
   codeBlocks.forEach((block, i) => { rendered = rendered.replace(`\u0000CODE${i}\u0000`, block); });
   return rendered;
+}
+
+function splitTableRow(row) {
+  return row.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(cell => cell.trim());
+}
+
+function isTableStart(lines, i) {
+  return i + 1 < lines.length && lines[i].includes('|') && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(lines[i + 1]);
+}
+
+function tableToHtml(lines, inline) {
+  const headers = splitTableRow(lines[0]);
+  const rows = lines.slice(2).map(splitTableRow);
+  return '<div class="table-wrap"><table><thead><tr>' + headers.map(h => `<th>${inline(h)}</th>`).join('') + '</tr></thead><tbody>' + rows.map(row => '<tr>' + headers.map((_, i) => `<td>${inline(row[i] || '')}</td>`).join('') + '</tr>').join('') + '</tbody></table></div>';
+}
+
+function highlightCode(code, lang = '') {
+  let html = escapeHtml(code);
+  const l = String(lang || '').trim().toLowerCase();
+  html = html.replace(/(&quot;.*?&quot;|'.*?'|`.*?`)/g, '<span class="tok-str">$1</span>');
+  html = html.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span class="tok-num">$1</span>');
+  html = html.replace(/(\/\/.*|#.*)$/gm, '<span class="tok-comment">$1</span>');
+  if (['js','javascript','ts','typescript','jsx','tsx'].includes(l)) html = html.replace(/\b(const|let|var|function|return|if|else|for|while|import|from|export|class|new|try|catch|await|async|true|false|null|undefined)\b/g, '<span class="tok-key">$1</span>');
+  else if (['py','python'].includes(l)) html = html.replace(/\b(def|return|if|elif|else|for|while|import|from|class|try|except|with|as|async|await|True|False|None)\b/g, '<span class="tok-key">$1</span>');
+  else if (['sh','bash','zsh','shell'].includes(l)) html = html.replace(/\b(if|then|else|elif|fi|for|while|do|done|case|esac|function|export|local)\b/g, '<span class="tok-key">$1</span>');
+  else html = html.replace(/\b(true|false|null|undefined)\b/g, '<span class="tok-key">$1</span>');
+  return html;
 }
 
 function languageFor(file) {
@@ -211,8 +249,8 @@ h1{font-size:20px;letter-spacing:-.025em;margin:0 0 6px} .subtitle{color:var(--m
 .skill-btn:hover{background:var(--surface-2)} .skill-btn.active{background:var(--text);border-color:var(--text);color:var(--bg)} .skill-btn strong{display:flex;align-items:center;gap:6px;font-size:14px;font-weight:600;min-width:0} .skill-btn span{display:block;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px} .skill-btn.active span{color:color-mix(in srgb,var(--bg) 72%,transparent)} .symlink-icon{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;color:var(--muted)} .symlink-icon svg{width:13px;height:13px;stroke-width:2} .skill-btn.active .symlink-icon{color:var(--bg)} h2{display:flex;align-items:center;gap:8px} h2 .symlink-icon{color:var(--muted)} h2 .symlink-icon svg{width:16px;height:16px} .symlink-icon::after{content:attr(data-tooltip);position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%) translateY(2px);background:var(--text);color:var(--bg);border:1px solid var(--line);padding:4px 7px;font:500 12px/1 ui-sans-serif,system-ui,sans-serif;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .12s,transform .12s;z-index:20;box-shadow:var(--shadow)} .symlink-icon::before{content:"";position:absolute;left:50%;bottom:calc(100% + 3px);transform:translateX(-50%);border:5px solid transparent;border-top-color:var(--text);opacity:0;pointer-events:none;transition:opacity .12s;z-index:21} .symlink-icon:hover::after,.symlink-icon:focus::after,.symlink-icon:hover::before,.symlink-icon:focus::before{opacity:1;transform:translateX(-50%) translateY(0)}
 .card{max-width:1080px;margin:0 auto;background:var(--surface);border:1px solid var(--line);border-radius:6px;box-shadow:var(--shadow);padding:32px}
 .meta{display:flex;gap:8px;flex-wrap:wrap;margin:28px 0 0;padding-top:20px;border-top:1px solid var(--line)} .pill{font-size:12px;color:var(--muted);background:var(--surface-2);border:1px solid var(--line);border-radius:4px;padding:6px 9px}
-.path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);word-break:break-all;font-size:12px} h2{font-size:32px;letter-spacing:-.04em;margin:0 0 8px} h3{margin-top:30px;color:var(--text);letter-spacing:-.02em} a{color:var(--text);text-underline-offset:3px} p,li{line-height:1.7} blockquote{border-left:3px solid var(--line);padding-left:14px;color:var(--muted);margin-left:0}
-pre{background:var(--code);border:1px solid var(--line);border-radius:4px;padding:16px;overflow:auto} code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace} :not(pre)>code{background:var(--surface-2);border:1px solid var(--line);padding:2px 5px;border-radius:3px}
+.path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);word-break:break-all;font-size:12px} h2{font-size:30px;letter-spacing:-.04em;margin:0 0 8px} h3{margin-top:28px;color:var(--text);letter-spacing:-.02em} a{color:var(--text);text-underline-offset:3px} p,li{font-size:14px;line-height:1.65} blockquote{border-left:3px solid var(--line);padding-left:14px;color:var(--muted);margin-left:0}
+pre{background:var(--code);border:1px solid var(--line);border-radius:4px;padding:16px;overflow:auto;font-size:13px;line-height:1.55} code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace} :not(pre)>code{background:var(--surface-2);border:1px solid var(--line);padding:2px 5px;border-radius:3px;font-size:.92em}.table-wrap{overflow:auto;margin:16px 0;border:1px solid var(--line);border-radius:4px} table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top} th{background:var(--surface-2);font-weight:700} tr:last-child td{border-bottom:0}.tok-key{color:#7c3aed}.tok-str{color:#047857}.tok-num{color:#2563eb}.tok-comment{color:var(--muted);font-style:italic}:root[data-theme="dark"] .tok-key{color:#c084fc}:root[data-theme="dark"] .tok-str{color:#86efac}:root[data-theme="dark"] .tok-num{color:#93c5fd}
 .content-section{scroll-margin-top:24px}.file-box{margin:0 0 14px;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--surface);scroll-margin-top:24px}
 .file-header{padding:11px 13px;background:var(--surface-2);border-bottom:1px solid var(--line);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text);font-size:12px} .file-box pre{border:0;border-radius:0;margin:0;max-height:620px} .resource-label{margin:24px 0 12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.08em;font-size:11px}
 .empty{text-align:center;color:var(--muted);padding:80px 20px} .sources{font-size:12px;color:var(--muted);padding-left:18px;line-height:1.6} .count{color:var(--muted);font-size:12px;margin-top:12px}
@@ -230,8 +268,9 @@ themeToggle.onclick = () => {const next = document.documentElement.dataset.theme
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
 function searchable(s){return [s.name,s.description,s.group,s.path,s.is_symlink?'symlink':'',s.symlink_target,s.body_markdown,...s.scripts.map(f=>f.name+' '+f.content),...s.references.map(f=>f.name+' '+f.content),...s.assets].join(' ').toLowerCase()}
 function symlinkIcon(){return '<span class="symlink-icon" data-tooltip="symlink" aria-label="symlink" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>'}
+function highlightCode(code,lang=''){let html=esc(code); const l=String(lang||'').trim().toLowerCase(); html=html.replace(/(&quot;.*?&quot;|'.*?')/g,'<span class="tok-str">$1</span>'); html=html.replace(/\\b(\\d+(?:\\.\\d+)?)\\b/g,'<span class="tok-num">$1</span>'); html=html.replace(/(\\/\\/.*|#.*)$/gm,'<span class="tok-comment">$1</span>'); if(['js','javascript','ts','typescript','jsx','tsx'].includes(l)) html=html.replace(/\\b(const|let|var|function|return|if|else|for|while|import|from|export|class|new|try|catch|await|async|true|false|null|undefined)\\b/g,'<span class="tok-key">$1</span>'); else if(['py','python'].includes(l)) html=html.replace(/\\b(def|return|if|elif|else|for|while|import|from|class|try|except|with|as|async|await|True|False|None)\\b/g,'<span class="tok-key">$1</span>'); else if(['sh','bash','zsh','shell'].includes(l)) html=html.replace(/\\b(if|then|else|elif|fi|for|while|do|done|case|esac|function|export|local)\\b/g,'<span class="tok-key">$1</span>'); else html=html.replace(/\\b(true|false|null|undefined)\\b/g,'<span class="tok-key">$1</span>'); return html}
 function renderList(){const term=q.value.toLowerCase().trim(); const shown=skills.filter(s=>!term||searchable(s).includes(term)); const groups=[...new Set(shown.map(s=>s.group))]; list.innerHTML=groups.map(g=>'<div class="group">'+esc(g)+'</div>'+shown.filter(s=>s.group===g).map(s=>'<button class="skill-btn '+(s.id===active?'active':'')+'" data-id="'+esc(s.id)+'"><strong>'+esc(s.name)+(s.is_symlink?symlinkIcon():'')+'</strong><span>'+esc(s.description)+'</span></button>').join('')).join('') || '<div class="empty">No matching skills</div>'; count.textContent=shown.length+' skill'+(shown.length===1?'':'s')+' found'; list.querySelectorAll('button').forEach(b=>b.onclick=()=>{active=b.dataset.id; render();})}
-function fileBox(f,id){return '<div class="file-box" id="'+esc(id)+'"><div class="file-header">'+esc(f.name)+' <span class="path">'+esc(f.path)+'</span></div><pre><code class="language-'+esc(f.language)+'">'+esc(f.content)+'</code></pre></div>'}
+function fileBox(f,id){return '<div class="file-box" id="'+esc(id)+'"><div class="file-header">'+esc(f.name)+' <span class="path">'+esc(f.path)+'</span></div><pre><code class="language-'+esc(f.language)+'">'+highlightCode(f.content,f.language)+'</code></pre></div>'}
 function resources(s){let html=''; if(s.references.length){html += '<div class="resource-label" id="references">References</div>' + s.references.map((f,i)=>fileBox(f,'reference-'+i)).join('')} if(s.assets.length){html += '<div class="resource-label" id="assets">Assets</div><ul>' + s.assets.map((a,i)=>'<li id="asset-'+i+'"><code>'+esc(a)+'</code></li>').join('') + '</ul>'} return html || '<p class="path">No resources found for this skill.</p>'}
 function scrollToId(id){const el=document.getElementById(id); if(el) main.scrollTo({top:el.offsetTop-18,behavior:'smooth'});}
 function tocLink(label,id,lvl){return '<button class="toc-link lvl-'+lvl+'" data-target="'+esc(id)+'">'+esc(label)+'</button>'}
