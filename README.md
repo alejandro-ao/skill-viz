@@ -1,11 +1,44 @@
 # skill-viz
 
-A standalone `npx` CLI that scans local and global agent skill folders and serves a live, self-contained HTML dashboard.
+Visualize Agent Skills from your terminal.
+
+`skill-viz` is a dependency-free `npx` CLI that scans local and global Agent Skill directories, starts a live local dashboard, and reloads automatically when skills change.
+
+## Quick start
+
+```bash
+npx skill-viz
+```
+
+The dashboard opens in your browser. It starts on the `common` profile and lets you switch agent profiles from the UI.
 
 ## Usage
 
 ```bash
-npx skill-viz
+npx skill-viz [options]
+```
+
+Common examples:
+
+```bash
+# Start the live dashboard without opening a browser
+npx skill-viz --no-open
+
+# Start on a specific agent profile
+npx skill-viz --agent claude
+npx skill-viz --agent pi
+
+# Use a fixed server port
+npx skill-viz --port 48765
+
+# Scan a different workspace root
+npx skill-viz --root /path/to/project
+
+# Add an extra skills directory
+npx skill-viz --include /extra/skills/dir
+
+# Generate one static HTML file and exit
+npx skill-viz --once --output skills.html
 ```
 
 Local checkout:
@@ -14,69 +47,70 @@ Local checkout:
 npx ../skill-visualizer.sh --no-open
 ```
 
-Common options:
+## Options
 
-```bash
-npx skill-viz --no-open
-npx skill-viz --port 48765
-npx skill-viz --agent claude
-npx skill-viz --agent pi
-npx skill-viz --root /path/to/project
-npx skill-viz --include /extra/skills/dir
-npx skill-viz --once --output skills.html
-```
+| Option | Description |
+| --- | --- |
+| `--agent`, `-a <name>` | Initially selected agent profile. |
+| `--root <dir>` | Workspace root to scan. Defaults to the current directory. |
+| `--include`, `-I <dir>` | Additional skills directory to scan. Can be repeated. |
+| `--port`, `-p <port>` | Port for the live server. Defaults to a random available port. |
+| `--output`, `-o <file>` | Also write the generated HTML snapshot to this file. |
+| `--once` | Write a static HTML file and exit instead of starting the live server. |
+| `--no-open`, `-n` | Do not open the dashboard in a browser. |
+| `--help`, `-h` | Show help. |
 
-By default the CLI starts a local server, opens it in your browser, and reloads automatically when project or global skills change. Use `--once` to write a static HTML file and exit.
+## Agent profiles
 
-By default it starts with the `common` profile, which shows shared `.agents` / `.config/agents` skills. The UI scans known profiles and includes an agent selector so you can switch agent views. Some agent views also include shared `common` skills when that agent's docs say it loads `.agents/skills`:
+Supported profiles:
 
-- common
-- Pi
-- Claude Code
-- Codex
-- Antigravity
-- Copilot
-- Mavis
-- MiniMax
-- Hermes
+- `common`
+- `pi`
+- `claude`
+- `codex`
+- `antigravity`
+- `copilot`
+- `mavis`
+- `minimax`
+- `hermes`
 
-Use `--agent <name>` to choose the initially selected profile.
+By default, `skill-viz` starts with `common`, which shows shared `.agents` / `.config/agents` skills. The dashboard scans known profiles and lets you switch views from the agent selector.
 
-Current shared-skill behavior:
+Some agent views include shared `common` skills when that agent's documented behavior loads `.agents/skills`:
 
-- `pi` includes `common` skills (`.agents/skills`) plus Pi-specific skill directories.
-- `codex` includes `common` skills, because OpenAI Codex documents `.agents/skills` as repository/user skill locations.
-- `antigravity` includes `common` workspace skills, because Google Antigravity documents workspace skills under `.agents/skills`.
+- `pi` includes `common` plus Pi-specific skill directories.
+- `codex` includes `common`, because OpenAI Codex documents `.agents/skills` as repository/user skill locations.
+- `antigravity` includes `common`, because Google Antigravity documents workspace skills under `.agents/skills`.
 - `claude` does **not** include `common`; Claude Code documents `.claude/skills` for personal/project skills.
 
-The generated UI shows each skill's `SKILL.md`, scripts, references, and assets with search, source grouping, a contents sidebar, symlink indicators, and light/dark mode.
+## Dashboard features
+
+- Live reload when skill files change.
+- Agent selector for supported agent profiles.
+- Search by skill name, description, scripts, references, assets, and paths.
+- Contents sidebar with `SKILL.md`, scripts, and resources sections.
+- Markdown rendering with tables and code highlighting.
+- Symlink detection with inline indicators.
+- Light/dark mode.
+- Mobile-friendly collapsible navigation.
 
 ## Publishing to npm / npx
 
-`npx` runs packages from the npm registry. To publish this package:
+`npx` runs packages from the npm registry. To publish:
 
 ```bash
 npm login
-npm publish --access public
-```
-
-Before publishing, check the package contents:
-
-```bash
 npm pack --dry-run
+npm publish --access public --otp YOUR_2FA_CODE
 ```
 
-After publishing, run it with:
+If your npm account requires 2FA, pass `--otp` or use a granular access token with publish permissions.
 
-```bash
-npx skill-viz
-```
-
-For updates, bump the version in `package.json` first:
+For updates, bump the version first:
 
 ```bash
 npm version patch
-npm publish
+npm publish --access public --otp YOUR_2FA_CODE
 ```
 
 ## License
