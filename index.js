@@ -183,14 +183,17 @@ function collectFiles(dir) {
   });
 }
 
-function discoverIn(base, group) {
+function discoverIn(base, group, agent = 'common') {
   if (!fs.existsSync(base)) return [];
   return fs.readdirSync(base).sort().flatMap(entry => {
     const skillDir = path.join(base, entry);
     const skillMd = path.join(skillDir, 'SKILL.md');
     const linkStat = fs.lstatSync(skillDir);
     const isSymlink = linkStat.isSymbolicLink();
-    const symlinkTarget = isSymlink ? fs.realpathSync(skillDir) : '';
+    let symlinkTarget = '';
+    if (isSymlink) {
+      try { symlinkTarget = fs.realpathSync(skillDir); } catch { return []; }
+    }
     if (!fs.existsSync(skillMd) || !fs.statSync(skillDir).isDirectory()) return [];
     const raw = fs.readFileSync(skillMd, 'utf8');
     const [meta, body] = parseFrontmatter(raw);
@@ -201,6 +204,7 @@ function discoverIn(base, group) {
       name: meta.name || entry,
       description: meta.description || '',
       group,
+      agent,
       path: skillDir,
       is_symlink: isSymlink,
       symlink_target: symlinkTarget,
@@ -213,28 +217,83 @@ function discoverIn(base, group) {
   });
 }
 
-function defaultSources(root) {
-  const home = os.homedir();
-  const candidates = [
-    ['Workspace .agents', path.join(root, '.agents', 'skills')],
-    ['Workspace .pi', path.join(root, '.pi', 'agent', 'skills')],
-    ['Global .agents', path.join(home, '.agents', 'skills')],
-    ['Global .pi', path.join(home, '.pi', 'agent', 'skills')],
-  ];
+const AGENT_PROFILES = {
+  common: root => [
+    ['Common workspace .agents', path.join(root, '.agents', 'skills')],
+    ['Common global .agents', path.join(os.homedir(), '.agents', 'skills')],
+    ['Common config agents', path.join(os.homedir(), '.config', 'agents', 'skills')],
+  ],
+  pi: root => [
+    ['Pi workspace', path.join(root, '.pi', 'agent', 'skills')],
+    ['Pi global', path.join(os.homedir(), '.pi', 'agent', 'skills')],
+  ],
+  claude: root => [
+    ['Claude Code workspace', path.join(root, '.claude', 'skills')],
+    ['Claude Code global', path.join(os.homedir(), '.claude', 'skills')],
+    ['Claude plugin cache', path.join(os.homedir(), '.claude', 'plugins', 'cache', 'skills')],
+    ['Claude marketplace skills', path.join(os.homedir(), '.claude', 'plugins', 'marketplaces', 'skills')],
+  ],
+  codex: root => [
+    ['Codex workspace', path.join(root, '.codex', 'skills')],
+    ['Codex global', path.join(os.homedir(), '.codex', 'skills')],
+    ['Codex system', path.join(os.homedir(), '.codex', 'skills', '.system')],
+    ['Codex vendor imports', path.join(os.homedir(), '.codex', 'vendor_imports', 'skills', 'skills')],
+  ],
+  antigravity: root => [
+    ['Antigravity workspace', path.join(root, '.gemini', 'antigravity', 'skills')],
+    ['Antigravity global', path.join(os.homedir(), '.gemini', 'antigravity', 'global_skills')],
+    ['Antigravity IDE global', path.join(os.homedir(), '.gemini', 'antigravity-ide', 'global_skills')],
+    ['Antigravity backup global', path.join(os.homedir(), '.gemini', 'antigravity-backup', 'global_skills')],
+  ],
+  copilot: root => [
+    ['Copilot workspace', path.join(root, '.copilot', 'skills')],
+    ['Copilot global', path.join(os.homedir(), '.copilot', 'skills')],
+  ],
+  mavis: root => [
+    ['Mavis global', path.join(os.homedir(), '.mavis', 'skills')],
+    ['Mavis built-in', path.join(os.homedir(), '.mavis', '.builtin-skills')],
+    ['Mavis main skills', path.join(os.homedir(), '.mavis', 'agents', 'main', 'skills')],
+    ['Mavis main built-in', path.join(os.homedir(), '.mavis', 'agents', 'main', '.builtin-skills')],
+  ],
+  minimax: root => [
+    ['MiniMax global', path.join(os.homedir(), '.minimaxagent', 'skills')],
+    ['MiniMax OpenClaw', path.join(os.homedir(), '.openclaw', '.minimax', 'skills')],
+    ['MiniMax project', path.join(root, '.minimax', 'skills')],
+  ],
+  hermes: root => [
+    ['Hermes global', path.join(os.homedir(), '.hermes', 'skills')],
+    ['Hermes agent skills', path.join(os.homedir(), '.hermes', 'hermes-agent', 'skills')],
+    ['Hermes workspace', path.join(root, '.hermes', 'skills')],
+  ],
+};
+
+function defaultSources(root, agents = ['all']) {
+  const selected = agents.includes('all') ? Object.keys(AGENT_PROFILES) : agents.filter(agent => agent !== 'custom');
+  const candidates = [];
+  for (const agent of selected) {
+    const profile = AGENT_PROFILES[agent];
+    if (!profile) throw new Error(`Unknown agent profile: ${agent}. Known agents: all, ${Object.keys(AGENT_PROFILES).join(', ')}`);
+    candidates.push(...profile(root).map(([label, p]) => [label, p, agent]));
+  }
   const seen = new Set();
   const unique = [];
-  for (const [label, p] of candidates) {
-    const resolved = fs.existsSync(p) ? fs.realpathSync(p) : path.resolve(p);
-    if (seen.has(resolved)) continue;
-    seen.add(resolved);
-    unique.push([label, p]);
+  for (const [label, p, agent] of candidates) {
+    const key = `${agent}:${label}:${fs.existsSync(p) ? fs.realpathSync(p) : path.resolve(p)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push([label, p, agent]);
   }
   return unique;
 }
 
-function buildHtml(skills, sources) {
-  const payload = JSON.stringify(skills).replace(/&/g, '\\u0026').replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
-  const sourcesHtml = sources.map(([label, p]) => `<li><code>${escapeHtml(label)}</code>: ${escapeHtml(p)}</li>`).join('');
+function normalizeAgents(agents = ['all']) {
+  return agents.includes('all') ? Object.keys(AGENT_PROFILES) : agents;
+}
+
+function buildHtml(skills, sources, selectedAgents = Object.keys(AGENT_PROFILES)) {
+  const agentNames = [...new Set(sources.map(([, , agent]) => agent))];
+  const payload = JSON.stringify({ skills, selected_agents: selectedAgents, agents: agentNames }).replace(/&/g, '\\u0026').replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+  const sourcesHtml = sources.map(([label, p, agent]) => `<li data-agent="${escapeHtml(agent)}"><code>${escapeHtml(label)}</code>: ${escapeHtml(p)}</li>`).join('');
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Skill Visualizer</title>
@@ -253,30 +312,35 @@ h1{font-size:20px;letter-spacing:-.025em;margin:0 0 6px} .subtitle{color:var(--m
 pre{background:var(--code);border:1px solid var(--line);border-radius:4px;padding:16px;overflow:auto;font-size:13px;line-height:1.55} code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace} :not(pre)>code{background:var(--surface-2);border:1px solid var(--line);padding:2px 5px;border-radius:3px;font-size:.92em}.table-wrap{overflow:auto;margin:16px 0;border:1px solid var(--line);border-radius:4px} table{width:100%;border-collapse:collapse;font-size:13px} th,td{padding:9px 11px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top} th{background:var(--surface-2);font-weight:700} tr:last-child td{border-bottom:0}.tok-key{color:#7c3aed}.tok-str{color:#047857}.tok-num{color:#2563eb}.tok-comment{color:var(--muted);font-style:italic}:root[data-theme="dark"] .tok-key{color:#c084fc}:root[data-theme="dark"] .tok-str{color:#86efac}:root[data-theme="dark"] .tok-num{color:#93c5fd}
 .content-section{scroll-margin-top:24px}.file-box{margin:0 0 14px;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--surface);scroll-margin-top:24px}
 .file-header{padding:11px 13px;background:var(--surface-2);border-bottom:1px solid var(--line);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--text);font-size:12px} .file-box pre{border:0;border-radius:0;margin:0;max-height:620px} .resource-label{margin:24px 0 12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.08em;font-size:11px}
-.empty{text-align:center;color:var(--muted);padding:80px 20px} .sources{font-size:12px;color:var(--muted);padding-left:18px;line-height:1.6} .count{color:var(--muted);font-size:12px;margin-top:12px}
+.empty{text-align:center;color:var(--muted);padding:80px 20px} .sources{font-size:12px;color:var(--muted);padding-left:18px;line-height:1.6} .sources li.hidden{display:none}.count{color:var(--muted);font-size:12px;margin-top:12px}.agent-filter{margin:18px 0 4px}.agent-list{display:grid;gap:4px}.agent-option{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);padding:5px 0}.agent-option input{accent-color:var(--text)}
 @media (max-width: 980px){.app{grid-template-columns:1fr}.toc-sidebar{max-height:34vh} aside{max-height:42vh;border-right:0;border-bottom:1px solid var(--line)} main{padding:18px}.card{padding:22px;border-radius:4px}}
-</style></head><body><div class="app"><aside><div class="sidebar-head"><div><h1>Skill Visualizer</h1><div class="subtitle">Standalone dashboard for workspace and global agent skills.</div></div><button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle theme">◐</button></div><input id="q" class="search" placeholder="Search skills, scripts, references…"><div id="list"></div><div class="count" id="count"></div><h3>Checked sources</h3><ul class="sources">${sourcesHtml}</ul></aside><aside class="toc-sidebar"><div class="toc-title">Contents</div><div id="toc"></div></aside><main id="main"><div id="detail" class="card"></div></main></div>
+</style></head><body><div class="app"><aside><div class="sidebar-head"><div><h1>Skill Visualizer</h1><div class="subtitle">Standalone dashboard for workspace and global agent skills.</div></div><button id="theme-toggle" class="icon-btn" type="button" aria-label="Toggle theme">◐</button></div><div class="agent-filter"><div class="toc-title">Agents</div><div id="agent-list"></div></div><input id="q" class="search" placeholder="Search skills, scripts, references…"><div id="list"></div><div class="count" id="count"></div><h3>Checked sources</h3><ul class="sources" id="sources">${sourcesHtml}</ul></aside><aside class="toc-sidebar"><div class="toc-title">Contents</div><div id="toc"></div></aside><main id="main"><div id="detail" class="card"></div></main></div>
 <script type="application/json" id="data">${payload}</script>
 <script>
-const skills = JSON.parse(document.getElementById('data').textContent);
-let active = skills[0]?.id;
-const list = document.getElementById('list'), detail = document.getElementById('detail'), q = document.getElementById('q'), count = document.getElementById('count'), toc = document.getElementById('toc'), main = document.getElementById('main'), themeToggle = document.getElementById('theme-toggle');
+const DATA = JSON.parse(document.getElementById('data').textContent);
+const skills = DATA.skills;
+let selectedAgents = new Set(DATA.selected_agents || DATA.agents || []);
+let active = skills.find(s => selectedAgents.has(s.agent))?.id || skills[0]?.id;
+const list = document.getElementById('list'), detail = document.getElementById('detail'), q = document.getElementById('q'), count = document.getElementById('count'), toc = document.getElementById('toc'), main = document.getElementById('main'), agentList = document.getElementById('agent-list'), sourcesEl = document.getElementById('sources'), themeToggle = document.getElementById('theme-toggle');
 const savedTheme = localStorage.getItem('skill-visualizer-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 document.documentElement.dataset.theme = savedTheme;
 themeToggle.textContent = savedTheme === 'dark' ? '☾' : '☼';
 themeToggle.onclick = () => {const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = next; localStorage.setItem('skill-visualizer-theme', next); themeToggle.textContent = next === 'dark' ? '☾' : '☼';};
 function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
-function searchable(s){return [s.name,s.description,s.group,s.path,s.is_symlink?'symlink':'',s.symlink_target,s.body_markdown,...s.scripts.map(f=>f.name+' '+f.content),...s.references.map(f=>f.name+' '+f.content),...s.assets].join(' ').toLowerCase()}
+function searchable(s){return [s.name,s.description,s.group,s.agent,s.path,s.is_symlink?'symlink':'',s.symlink_target,s.body_markdown,...s.scripts.map(f=>f.name+' '+f.content),...s.references.map(f=>f.name+' '+f.content),...s.assets].join(' ').toLowerCase()}
 function symlinkIcon(){return '<span class="symlink-icon" data-tooltip="symlink" aria-label="symlink" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>'}
 function highlightCode(code,lang=''){let html=esc(code); const l=String(lang||'').trim().toLowerCase(); html=html.replace(/(&quot;.*?&quot;|'.*?')/g,'<span class="tok-str">$1</span>'); html=html.replace(/\\b(\\d+(?:\\.\\d+)?)\\b/g,'<span class="tok-num">$1</span>'); html=html.replace(/(\\/\\/.*|#.*)$/gm,'<span class="tok-comment">$1</span>'); if(['js','javascript','ts','typescript','jsx','tsx'].includes(l)) html=html.replace(/\\b(const|let|var|function|return|if|else|for|while|import|from|export|class|new|try|catch|await|async|true|false|null|undefined)\\b/g,'<span class="tok-key">$1</span>'); else if(['py','python'].includes(l)) html=html.replace(/\\b(def|return|if|elif|else|for|while|import|from|class|try|except|with|as|async|await|True|False|None)\\b/g,'<span class="tok-key">$1</span>'); else if(['sh','bash','zsh','shell'].includes(l)) html=html.replace(/\\b(if|then|else|elif|fi|for|while|do|done|case|esac|function|export|local)\\b/g,'<span class="tok-key">$1</span>'); else html=html.replace(/\\b(true|false|null|undefined)\\b/g,'<span class="tok-key">$1</span>'); return html}
-function renderList(){const term=q.value.toLowerCase().trim(); const shown=skills.filter(s=>!term||searchable(s).includes(term)); const groups=[...new Set(shown.map(s=>s.group))]; list.innerHTML=groups.map(g=>'<div class="group">'+esc(g)+'</div>'+shown.filter(s=>s.group===g).map(s=>'<button class="skill-btn '+(s.id===active?'active':'')+'" data-id="'+esc(s.id)+'"><strong>'+esc(s.name)+(s.is_symlink?symlinkIcon():'')+'</strong><span>'+esc(s.description)+'</span></button>').join('')).join('') || '<div class="empty">No matching skills</div>'; count.textContent=shown.length+' skill'+(shown.length===1?'':'s')+' found'; list.querySelectorAll('button').forEach(b=>b.onclick=()=>{active=b.dataset.id; render();})}
+function renderAgentFilter(){agentList.innerHTML=(DATA.agents||[]).map(a=>'<label class="agent-option"><input type="radio" name="agent" value="'+esc(a)+'" '+(selectedAgents.has(a)?'checked':'')+'> '+esc(a)+'</label>').join(''); agentList.querySelectorAll('input').forEach(input=>input.onchange=()=>{selectedAgents=new Set([input.value]); const visible=skills.filter(s=>selectedAgents.has(s.agent)); active=visible[0]?.id; render();});}
+function renderSources(){sourcesEl.querySelectorAll('li').forEach(li=>li.classList.toggle('hidden',!selectedAgents.has(li.dataset.agent)));}
+function visibleSkills(){return skills.filter(s=>selectedAgents.has(s.agent));}
+function renderList(){renderSources(); const term=q.value.toLowerCase().trim(); const shown=visibleSkills().filter(s=>!term||searchable(s).includes(term)); const groups=[...new Set(shown.map(s=>s.group))]; list.innerHTML=groups.map(g=>'<div class="group">'+esc(g)+'</div>'+shown.filter(s=>s.group===g).map(s=>'<button class="skill-btn '+(s.id===active?'active':'')+'" data-id="'+esc(s.id)+'"><strong>'+esc(s.name)+(s.is_symlink?symlinkIcon():'')+'</strong><span>'+esc(s.description)+'</span></button>').join('')).join('') || '<div class="empty">No matching skills</div>'; count.textContent=shown.length+' skill'+(shown.length===1?'':'s')+' found'; list.querySelectorAll('button').forEach(b=>b.onclick=()=>{active=b.dataset.id; render();})}
 function fileBox(f,id){return '<div class="file-box" id="'+esc(id)+'"><div class="file-header">'+esc(f.name)+' <span class="path">'+esc(f.path)+'</span></div><pre><code class="language-'+esc(f.language)+'">'+highlightCode(f.content,f.language)+'</code></pre></div>'}
 function resources(s){let html=''; if(s.references.length){html += '<div class="resource-label" id="references">References</div>' + s.references.map((f,i)=>fileBox(f,'reference-'+i)).join('')} if(s.assets.length){html += '<div class="resource-label" id="assets">Assets</div><ul>' + s.assets.map((a,i)=>'<li id="asset-'+i+'"><code>'+esc(a)+'</code></li>').join('') + '</ul>'} return html || '<p class="path">No resources found for this skill.</p>'}
 function scrollToId(id){const el=document.getElementById(id); if(el) main.scrollTo({top:el.offsetTop-18,behavior:'smooth'});}
 function tocLink(label,id,lvl){return '<button class="toc-link lvl-'+lvl+'" data-target="'+esc(id)+'">'+esc(label)+'</button>'}
 function buildToc(s){const skillLinks=[tocLink('Overview','skill-md',1)]+[...detail.querySelectorAll('#skill-md h1,#skill-md h2,#skill-md h3,#skill-md h4,#skill-md h5,#skill-md h6')].map(h=>tocLink(h.textContent,h.id,Number(h.tagName.slice(1)))).join(''); const scriptLinks=s.scripts.length?s.scripts.map((f,i)=>tocLink(f.name,'script-'+i,1)).join(''):'<div class="path">No scripts</div>'; let resourceLinks=''; if(s.references.length) resourceLinks+=tocLink('References','references',1)+s.references.map((f,i)=>tocLink(f.name,'reference-'+i,2)).join(''); if(s.assets.length) resourceLinks+=tocLink('Assets','assets',1)+s.assets.map((a,i)=>tocLink(a,'asset-'+i,2)).join(''); if(!resourceLinks) resourceLinks='<div class="path">No resources</div>'; toc.innerHTML='<details class="toc-section" open><summary>SKILL.md</summary>'+skillLinks+'</details><details class="toc-section"><summary>Scripts</summary>'+scriptLinks+'</details><details class="toc-section"><summary>Resources</summary>'+resourceLinks+'</details>'; toc.querySelectorAll('.toc-link').forEach(btn=>btn.onclick=()=>scrollToId(btn.dataset.target));}
 function renderDetail(){const s=skills.find(x=>x.id===active); if(!s){detail.innerHTML='<div class="empty"><h2>No skills found</h2><p>Add SKILL.md files under a checked skills directory.</p></div>'; toc.innerHTML=''; return} detail.innerHTML='<h2>'+esc(s.name)+(s.is_symlink?symlinkIcon():'')+'</h2><div class="path">'+esc(s.path)+(s.is_symlink?' → '+esc(s.symlink_target):'')+'</div><p>'+esc(s.description)+'</p><section id="skill-md" class="content-section">'+s.body_html+'</section>'+(s.scripts.length?'<h3 id="scripts" class="content-section">Scripts</h3>'+s.scripts.map((f,i)=>fileBox(f,'script-'+i)).join(''):'')+((s.references.length||s.assets.length)?'<h3 id="resources" class="content-section">Resources</h3>'+resources(s):'')+'<div class="meta"><span class="pill">'+esc(s.group)+'</span><span class="pill">'+s.scripts.length+' scripts</span><span class="pill">'+s.references.length+' references</span><span class="pill">'+s.assets.length+' assets</span></div>'; buildToc(s); main.scrollTop=0}
-function render(){renderList(); renderDetail()} q.oninput=render; render();
+function render(){renderList(); renderDetail()} q.oninput=render; renderAgentFilter(); render();
 if (location.protocol === 'http:' || location.protocol === 'https:') {
   const events = new EventSource('/__events');
   events.addEventListener('reload', () => location.reload());
@@ -285,12 +349,13 @@ if (location.protocol === 'http:' || location.protocol === 'https:') {
 }
 
 function parseArgs(argv) {
-  const args = { root: process.cwd(), output: null, includes: [], open: true, port: 0, once: false };
+  const args = { root: process.cwd(), output: null, includes: [], agents: ['common'], open: true, port: 0, once: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--root') args.root = path.resolve(argv[++i]);
     else if (arg === '--output' || arg === '-o') args.output = path.resolve(argv[++i]);
     else if (arg === '--include' || arg === '-I') args.includes.push(path.resolve(argv[++i]));
+    else if (arg === '--agent' || arg === '-a') args.agents = argv[++i].split(',').map(x => x.trim()).filter(Boolean);
     else if (arg === '--port' || arg === '-p') args.port = Number(argv[++i]);
     else if (arg === '--once') args.once = true;
     else if (arg === '--no-open' || arg === '-n') args.open = false;
@@ -301,7 +366,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: skill-visualizer [options]\n\nStart a live HTML dashboard for local and global agent skills.\n\nOptions:\n  --root <dir>        Workspace root to scan (default: current directory)\n  -o, --output <file> Also write the generated HTML file (default: temp directory)\n  -I, --include <dir> Additional skills directory to scan. Can be repeated\n  -p, --port <port>   Port for the live server (default: random available port)\n  --once              Write one static HTML file and exit\n  -n, --no-open       Do not open the dashboard in a browser\n  -h, --help          Show this help`);
+  console.log(`Usage: skill-visualizer [options]\n\nStart a live HTML dashboard for local and global agent skills.\n\nOptions:\n  --root <dir>         Workspace root to scan (default: current directory)\n  -a, --agent <name>   Initially selected agent profile: common, pi, claude, codex, antigravity, copilot, mavis, minimax, hermes\n  -o, --output <file>  Also write the generated HTML file (default: temp directory)\n  -I, --include <dir>  Additional skills directory to scan. Can be repeated\n  -p, --port <port>    Port for the live server (default: random available port)\n  --once               Write one static HTML file and exit\n  -n, --no-open        Do not open the dashboard in a browser\n  -h, --help           Show this help`);
 }
 
 function openUrl(url) {
@@ -312,9 +377,11 @@ function openUrl(url) {
 }
 
 function buildSnapshot(args) {
-  const sources = [...defaultSources(path.resolve(args.root)), ...args.includes.map((p, i) => [`Extra ${i + 1}`, p])];
-  const skills = sources.flatMap(([group, p]) => discoverIn(p, group));
-  const html = buildHtml(skills, sources);
+  const selectedAgents = normalizeAgents(args.agents).slice(0, 1);
+  if (args.includes.length && !selectedAgents.includes('custom')) selectedAgents.push('custom');
+  const sources = [...defaultSources(path.resolve(args.root), ['all']), ...args.includes.map((p, i) => [`Extra ${i + 1}`, p, 'custom'])];
+  const skills = sources.flatMap(([group, p, agent]) => discoverIn(p, group, agent));
+  const html = buildHtml(skills, sources, selectedAgents);
   return { sources, skills, html };
 }
 

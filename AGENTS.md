@@ -45,6 +45,7 @@ node --check index.js
 - The generated HTML must remain self-contained and work offline when emitted with `--once`.
 - Preserve CLI compatibility where practical:
   - `--root <dir>`
+  - `--agent` / `-a <name>`
   - `--output` / `-o <file>`
   - `--include` / `-I <dir>`
   - `--port` / `-p <port>`
@@ -60,12 +61,19 @@ npx . --no-open --port 48765
 
 ## Skill Discovery
 
-Default scanned directories:
+Default selected profile is `common`. The UI scans profiles from `AGENT_PROFILES` in `index.js`, but only displays one selected agent at a time. Supported profiles include:
 
-- `./.agents/skills`
-- `./.pi/agent/skills`
-- `~/.agents/skills`
-- `~/.pi/agent/skills`
+- `common`
+- `pi`
+- `claude`
+- `codex`
+- `antigravity`
+- `copilot`
+- `mavis`
+- `minimax`
+- `hermes`
+
+Users can choose the initial profile with `--agent claude` or switch profiles in the UI.
 
 A skill is a directory containing a direct `SKILL.md` file. Optional child directories:
 
