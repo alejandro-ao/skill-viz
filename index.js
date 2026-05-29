@@ -217,6 +217,12 @@ function discoverIn(base, group, agent = 'common') {
   });
 }
 
+const AGENT_USES_COMMON = {
+  pi: true,
+  codex: true,
+  antigravity: true,
+};
+
 const AGENT_PROFILES = {
   common: root => [
     ['Common workspace .agents', path.join(root, '.agents', 'skills')],
@@ -240,10 +246,11 @@ const AGENT_PROFILES = {
     ['Codex vendor imports', path.join(os.homedir(), '.codex', 'vendor_imports', 'skills', 'skills')],
   ],
   antigravity: root => [
-    ['Antigravity workspace', path.join(root, '.gemini', 'antigravity', 'skills')],
-    ['Antigravity global', path.join(os.homedir(), '.gemini', 'antigravity', 'global_skills')],
-    ['Antigravity IDE global', path.join(os.homedir(), '.gemini', 'antigravity-ide', 'global_skills')],
-    ['Antigravity backup global', path.join(os.homedir(), '.gemini', 'antigravity-backup', 'global_skills')],
+    ['Antigravity global', path.join(os.homedir(), '.gemini', 'config', 'skills')],
+    ['Antigravity legacy global', path.join(os.homedir(), '.gemini', 'antigravity', 'global_skills')],
+    ['Antigravity legacy IDE global', path.join(os.homedir(), '.gemini', 'antigravity-ide', 'global_skills')],
+    ['Antigravity legacy backup global', path.join(os.homedir(), '.gemini', 'antigravity-backup', 'global_skills')],
+    ['Antigravity legacy workspace', path.join(root, '.agent', 'skills')],
   ],
   copilot: root => [
     ['Copilot workspace', path.join(root, '.copilot', 'skills')],
@@ -292,7 +299,7 @@ function normalizeAgents(agents = ['all']) {
 
 function buildHtml(skills, sources, selectedAgents = Object.keys(AGENT_PROFILES)) {
   const agentNames = [...new Set(sources.map(([, , agent]) => agent))];
-  const payload = JSON.stringify({ skills, selected_agents: selectedAgents, agents: agentNames }).replace(/&/g, '\\u0026').replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+  const payload = JSON.stringify({ skills, selected_agents: selectedAgents, agents: agentNames, common_by_agent: AGENT_USES_COMMON }).replace(/&/g, '\\u0026').replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
   const sourcesHtml = sources.map(([label, p, agent]) => `<li data-agent="${escapeHtml(agent)}"><code>${escapeHtml(label)}</code>: ${escapeHtml(p)}</li>`).join('');
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -339,8 +346,9 @@ function searchable(s){return [s.name,s.description,s.group,s.agent,s.path,s.is_
 function symlinkIcon(){return '<span class="symlink-icon" data-tooltip="symlink" aria-label="symlink" tabindex="0"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span>'}
 function highlightCode(code,lang=''){let html=esc(code); const l=String(lang||'').trim().toLowerCase(); html=html.replace(/(&quot;.*?&quot;|'.*?')/g,'<span class="tok-str">$1</span>'); html=html.replace(/\\b(\\d+(?:\\.\\d+)?)\\b/g,'<span class="tok-num">$1</span>'); html=html.replace(/(\\/\\/.*|#.*)$/gm,'<span class="tok-comment">$1</span>'); if(['js','javascript','ts','typescript','jsx','tsx'].includes(l)) html=html.replace(/\\b(const|let|var|function|return|if|else|for|while|import|from|export|class|new|try|catch|await|async|true|false|null|undefined)\\b/g,'<span class="tok-key">$1</span>'); else if(['py','python'].includes(l)) html=html.replace(/\\b(def|return|if|elif|else|for|while|import|from|class|try|except|with|as|async|await|True|False|None)\\b/g,'<span class="tok-key">$1</span>'); else if(['sh','bash','zsh','shell'].includes(l)) html=html.replace(/\\b(if|then|else|elif|fi|for|while|do|done|case|esac|function|export|local)\\b/g,'<span class="tok-key">$1</span>'); else html=html.replace(/\\b(true|false|null|undefined)\\b/g,'<span class="tok-key">$1</span>'); return html}
 function renderAgentFilter(){const current=[...selectedAgents][0] || (DATA.agents||[])[0]; agentList.innerHTML='<select class="agent-select" aria-label="Agent profile">'+(DATA.agents||[]).map(a=>'<option value="'+esc(a)+'" '+(a===current?'selected':'')+'>'+esc(a)+'</option>').join('')+'</select>'; agentList.querySelector('select').onchange=e=>{selectedAgents=new Set([e.target.value]); const visible=skills.filter(s=>selectedAgents.has(s.agent)); active=visible[0]?.id; render();};}
-function renderSources(){sourcesEl.querySelectorAll('li').forEach(li=>li.classList.toggle('hidden',!selectedAgents.has(li.dataset.agent)));}
-function visibleSkills(){return skills.filter(s=>selectedAgents.has(s.agent));}
+function activeAgentSet(){const selected=[...selectedAgents][0]; const set=new Set(selected?[selected]:[]); if(DATA.common_by_agent && DATA.common_by_agent[selected]) set.add('common'); return set;}
+function renderSources(){const agents=activeAgentSet(); sourcesEl.querySelectorAll('li').forEach(li=>li.classList.toggle('hidden',!agents.has(li.dataset.agent)));}
+function visibleSkills(){const agents=activeAgentSet(); return skills.filter(s=>agents.has(s.agent));}
 function renderList(){renderSources(); const term=q.value.toLowerCase().trim(); const shown=visibleSkills().filter(s=>!term||searchable(s).includes(term)); const groups=[...new Set(shown.map(s=>s.group))]; list.innerHTML=groups.map(g=>'<div class="group">'+esc(g)+'</div>'+shown.filter(s=>s.group===g).map(s=>'<button class="skill-btn '+(s.id===active?'active':'')+'" data-id="'+esc(s.id)+'"><strong>'+esc(s.name)+(s.is_symlink?symlinkIcon():'')+'</strong><span>'+esc(s.description)+'</span></button>').join('')).join('') || '<div class="empty">No matching skills</div>'; count.textContent=shown.length+' skill'+(shown.length===1?'':'s')+' found'; list.querySelectorAll('button').forEach(b=>b.onclick=()=>{active=b.dataset.id; render();})}
 function fileBox(f,id){return '<div class="file-box" id="'+esc(id)+'"><div class="file-header">'+esc(f.name)+' <span class="path">'+esc(f.path)+'</span></div><pre><code class="language-'+esc(f.language)+'">'+highlightCode(f.content,f.language)+'</code></pre></div>'}
 function resources(s){let html=''; if(s.references.length){html += '<div class="resource-label" id="references">References</div>' + s.references.map((f,i)=>fileBox(f,'reference-'+i)).join('')} if(s.assets.length){html += '<div class="resource-label" id="assets">Assets</div><ul>' + s.assets.map((a,i)=>'<li id="asset-'+i+'"><code>'+esc(a)+'</code></li>').join('') + '</ul>'} return html || '<p class="path">No resources found for this skill.</p>'}

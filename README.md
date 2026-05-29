@@ -28,7 +28,7 @@ npx skill-visualizer-sh --once --output skills.html
 
 By default the CLI starts a local server, opens it in your browser, and reloads automatically when project or global skills change. Use `--once` to write a static HTML file and exit.
 
-By default it starts with the `common` profile, which shows shared `.agents` / `.config/agents` skills. The UI scans known profiles and includes an agent selector so you can switch to one agent at a time:
+By default it starts with the `common` profile, which shows shared `.agents` / `.config/agents` skills. The UI scans known profiles and includes an agent selector so you can switch agent views. Some agent views also include shared `common` skills when that agent's docs say it loads `.agents/skills`:
 
 - common
 - Pi
@@ -41,6 +41,13 @@ By default it starts with the `common` profile, which shows shared `.agents` / `
 - Hermes
 
 Use `--agent <name>` to choose the initially selected profile.
+
+Current shared-skill behavior:
+
+- `pi` includes `common` skills (`.agents/skills`) plus Pi-specific skill directories.
+- `codex` includes `common` skills, because OpenAI Codex documents `.agents/skills` as repository/user skill locations.
+- `antigravity` includes `common` workspace skills, because Google Antigravity documents workspace skills under `.agents/skills`.
+- `claude` does **not** include `common`; Claude Code documents `.claude/skills` for personal/project skills.
 
 The generated UI shows each skill's `SKILL.md`, scripts, references, and assets with search, source grouping, a contents sidebar, symlink indicators, and light/dark mode.
 
