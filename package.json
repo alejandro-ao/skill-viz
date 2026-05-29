@@ -1,0 +1,19 @@
+{
+  "name": "skill-visualizer-sh",
+  "version": "0.1.0",
+  "description": "Standalone npx CLI for visualizing local and global agent skills.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "skill-visualizer": "./index.js",
+    "skill-visualizer-sh": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
