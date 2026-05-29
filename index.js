@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
 const TEXT_EXTENSIONS = new Set(['.md','.txt','.py','.js','.ts','.tsx','.jsx','.json','.yaml','.yml','.toml','.sh','.bash','.zsh','.css','.html','.xml','.csv','.sql']);
@@ -119,6 +119,22 @@ function walkFiles(dir) {
   return results;
 }
 
+function walkDirs(dir) {
+  if (!fs.existsSync(dir)) return [];
+  const results = [];
+  const walk = current => {
+    results.push(current);
+    for (const name of fs.readdirSync(current).sort()) {
+      const p = path.join(current, name);
+      try {
+        if (fs.statSync(p).isDirectory()) walk(p);
+      } catch {}
+    }
+  };
+  walk(dir);
+  return results;
+}
+
 function collectFiles(dir) {
   return walkFiles(dir).map(file => {
     const rel = path.relative(dir, file).split(path.sep).join('/');
@@ -221,16 +237,22 @@ function resources(s){let html=''; if(s.references.length){html += '<div class="
 function setupTabs(){const buttons=[...detail.querySelectorAll('.skill-tab')], panels=[...detail.querySelectorAll('.tab-content')]; buttons.forEach(btn=>btn.onclick=()=>{buttons.forEach(b=>b.classList.toggle('active',b===btn)); panels.forEach(p=>p.classList.toggle('active',p.dataset.tab===btn.dataset.tab));})}
 function renderDetail(){const s=skills.find(x=>x.id===active); if(!s){detail.innerHTML='<div class="empty"><h2>No skills found</h2><p>Add SKILL.md files under a checked skills directory.</p></div>'; return} const hasScripts=s.scripts.length>0, hasResources=s.references.length>0||s.assets.length>0; detail.innerHTML='<h2>'+esc(s.name)+(s.is_symlink?symlinkIcon():'')+'</h2><div class="path">'+esc(s.path)+(s.is_symlink?' → '+esc(s.symlink_target):'')+'</div><p>'+esc(s.description)+'</p><div class="skill-tabs"><button class="skill-tab active" data-tab="skill">SKILL.md</button>'+(hasScripts?'<button class="skill-tab" data-tab="scripts">Scripts ('+s.scripts.length+')</button>':'')+(hasResources?'<button class="skill-tab" data-tab="resources">Resources ('+(s.references.length+s.assets.length)+')</button>':'')+'</div><div class="tab-content active" data-tab="skill"><section>'+s.body_html+'</section></div>'+(hasScripts?'<div class="tab-content" data-tab="scripts">'+s.scripts.map(fileBox).join('')+'</div>':'')+(hasResources?'<div class="tab-content" data-tab="resources">'+resources(s)+'</div>':'')+'<div class="meta"><span class="pill">'+esc(s.group)+'</span><span class="pill">'+s.scripts.length+' scripts</span><span class="pill">'+s.references.length+' references</span><span class="pill">'+s.assets.length+' assets</span></div>'; setupTabs()}
 function render(){renderList(); renderDetail()} q.oninput=render; render();
+if (location.protocol === 'http:' || location.protocol === 'https:') {
+  const events = new EventSource('/__events');
+  events.addEventListener('reload', () => location.reload());
+}
 </script></body></html>`;
 }
 
 function parseArgs(argv) {
-  const args = { root: process.cwd(), output: null, includes: [], open: true };
+  const args = { root: process.cwd(), output: null, includes: [], open: true, port: 0, once: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--root') args.root = path.resolve(argv[++i]);
     else if (arg === '--output' || arg === '-o') args.output = path.resolve(argv[++i]);
     else if (arg === '--include' || arg === '-I') args.includes.push(path.resolve(argv[++i]));
+    else if (arg === '--port' || arg === '-p') args.port = Number(argv[++i]);
+    else if (arg === '--once') args.once = true;
     else if (arg === '--no-open' || arg === '-n') args.open = false;
     else if (arg === '--help' || arg === '-h') { printHelp(); process.exit(0); }
     else { console.error(`Unknown argument: ${arg}`); printHelp(); process.exit(2); }
@@ -239,26 +261,114 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Usage: skill-visualizer [options]\n\nGenerate an HTML dashboard for local and global agent skills.\n\nOptions:\n  --root <dir>        Workspace root to scan (default: current directory)\n  -o, --output <file> Output HTML file (default: OS temp directory)\n  -I, --include <dir> Additional skills directory to scan. Can be repeated\n  -n, --no-open       Do not open the generated HTML in a browser\n  -h, --help          Show this help`);
+  console.log(`Usage: skill-visualizer [options]\n\nStart a live HTML dashboard for local and global agent skills.\n\nOptions:\n  --root <dir>        Workspace root to scan (default: current directory)\n  -o, --output <file> Also write the generated HTML file (default: temp directory)\n  -I, --include <dir> Additional skills directory to scan. Can be repeated\n  -p, --port <port>   Port for the live server (default: random available port)\n  --once              Write one static HTML file and exit\n  -n, --no-open       Do not open the dashboard in a browser\n  -h, --help          Show this help`);
 }
 
-function openFile(file) {
-  const url = `file://${path.resolve(file)}`;
+function openUrl(url) {
   const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
   const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
   const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
   child.unref();
 }
 
-function main() {
-  const args = parseArgs(process.argv.slice(2));
+function buildSnapshot(args) {
   const sources = [...defaultSources(path.resolve(args.root)), ...args.includes.map((p, i) => [`Extra ${i + 1}`, p])];
   const skills = sources.flatMap(([group, p]) => discoverIn(p, group));
-  const output = args.output || path.join(os.tmpdir(), 'skills-visualizer.html');
+  const html = buildHtml(skills, sources);
+  return { sources, skills, html };
+}
+
+function watchDashboard(args, onChange) {
+  let snapshot = buildSnapshot(args);
+  const watched = new Map();
+  let timer = null;
+
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      snapshot = buildSnapshot(args);
+      refreshWatchers();
+      onChange(snapshot);
+    }, 120);
+  };
+
+  const addWatcher = dir => {
+    if (!dir || !fs.existsSync(dir)) return;
+    let resolved;
+    try { resolved = fs.realpathSync(dir); } catch { return; }
+    if (watched.has(resolved)) return;
+    try {
+      const watcher = fs.watch(resolved, { recursive: true }, schedule);
+      watched.set(resolved, watcher);
+    } catch {
+      for (const subdir of walkDirs(resolved)) {
+        if (watched.has(subdir)) continue;
+        try { watched.set(subdir, fs.watch(subdir, schedule)); } catch {}
+      }
+    }
+  };
+
+  const refreshWatchers = () => {
+    for (const [, sourcePath] of snapshot.sources) addWatcher(sourcePath);
+    for (const skill of snapshot.skills) {
+      addWatcher(skill.path);
+      if (skill.is_symlink) addWatcher(skill.symlink_target);
+    }
+  };
+
+  refreshWatchers();
+  return () => snapshot;
+}
+
+function writeSnapshot(output, snapshot) {
   fs.mkdirSync(path.dirname(output), { recursive: true });
-  fs.writeFileSync(output, buildHtml(skills, sources), 'utf8');
-  console.log(`Wrote ${skills.length} skills to ${output}`);
-  if (args.open) openFile(output);
+  fs.writeFileSync(output, snapshot.html, 'utf8');
+}
+
+function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const output = args.output || path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'skill-visualizer-')), 'index.html');
+  let current = buildSnapshot(args);
+  writeSnapshot(output, current);
+
+  if (args.once) {
+    console.log(`Wrote ${current.skills.length} skills to ${output}`);
+    if (args.open) openUrl(`file://${path.resolve(output)}`);
+    return;
+  }
+
+  const clients = new Set();
+  const server = http.createServer((req, res) => {
+    if (req.url === '/__events') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+      res.write(': connected\n\n');
+      clients.add(res);
+      req.on('close', () => clients.delete(res));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(current.html);
+  });
+
+  watchDashboard(args, snapshot => {
+    current = snapshot;
+    writeSnapshot(output, current);
+    for (const client of clients) client.write('event: reload\ndata: changed\n\n');
+    console.log(`Reloaded ${current.skills.length} skills after file change`);
+  });
+
+  server.listen(args.port, '127.0.0.1', () => {
+    const { port } = server.address();
+    const url = `http://127.0.0.1:${port}/`;
+    console.log(`Serving ${current.skills.length} skills at ${url}`);
+    console.log(`Snapshot: ${output}`);
+    console.log('Watching skill directories for changes. Press Ctrl+C to stop.');
+    if (args.open) openUrl(url);
+  });
 }
 
 main();

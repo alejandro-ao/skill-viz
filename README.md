@@ -1,6 +1,6 @@
 # Skill Visualizer NPX
 
-A standalone `npx` CLI that scans local and global agent skill folders and generates a self-contained HTML dashboard.
+A standalone `npx` CLI that scans local and global agent skill folders and serves a live, self-contained HTML dashboard.
 
 ## Usage
 
@@ -17,10 +17,14 @@ npx ../skill-visualizer.sh --no-open
 Common options:
 
 ```bash
-npx skill-visualizer-sh --output skills.html --no-open
+npx skill-visualizer-sh --no-open
+npx skill-visualizer-sh --port 48765
 npx skill-visualizer-sh --root /path/to/project
 npx skill-visualizer-sh --include /extra/skills/dir
+npx skill-visualizer-sh --once --output skills.html
 ```
+
+By default the CLI starts a local server, opens it in your browser, and reloads automatically when project or global skills change. Use `--once` to write a static HTML file and exit.
 
 By default it checks workspace and global skill directories such as:
 
